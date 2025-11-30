@@ -1,0 +1,3 @@
+// Sighting feature module
+export {};
+

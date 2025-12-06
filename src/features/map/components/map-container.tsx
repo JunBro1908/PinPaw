@@ -98,25 +98,72 @@ export function MapContainer() {
 
   // Initialize map
   useEffect(() => {
-    if (!mapRef.current || mapInstance || mapRef.current.children.length > 0) {
+    if (!mapRef.current) {
       return;
     }
 
+    // 스토어에서 최신 상태 확인
+    const currentMapInstance = useMapStore.getState().mapInstance;
+
+    // mapInstance가 있고 DOM에도 지도가 렌더링되어 있으면 재생성하지 않음
+    if (currentMapInstance && mapRef.current.children.length > 0) {
+      return;
+    }
+
+    // mapInstance가 null이지만 DOM에 지도가 남아있으면 정리 (zombie DOM)
+    if (currentMapInstance === null && mapRef.current.children.length > 0) {
+      while (mapRef.current.firstChild) {
+        mapRef.current.removeChild(mapRef.current.firstChild);
+      }
+    }
+
+    // mapInstance가 null이 아니면 재생성하지 않음
+    if (currentMapInstance !== null) {
+      return;
+    }
+
+    // 이미 초기화 중이면 재생성하지 않음
+    if (isMapInitialized.current) {
+      return;
+    }
+
+    let timeoutId: NodeJS.Timeout | null = null;
+    let isMounted = true;
+
     const initMap = () => {
+      if (!isMounted || !mapRef.current) {
+        return;
+      }
+
+      // 스토어에서 최신 mapInstance 상태 확인
+      const latestMapInstance = useMapStore.getState().mapInstance;
+      if (latestMapInstance !== null) {
+        return;
+      }
+
       if (
         typeof window === "undefined" ||
         !window.naver ||
         !window.naver.maps
       ) {
-        setTimeout(initMap, MAP_CONFIG.naverMapsCheckInterval);
+        timeoutId = setTimeout(initMap, MAP_CONFIG.naverMapsCheckInterval);
         return;
       }
 
-      if (isMapInitialized.current) return;
+      // 다시 한번 체크 (비동기 실행 중 상태 변경 가능)
+      const finalMapInstance = useMapStore.getState().mapInstance;
+      if (
+        isMapInitialized.current ||
+        mapRef.current.children.length > 0 ||
+        finalMapInstance !== null
+      ) {
+        return;
+      }
+
       isMapInitialized.current = true;
 
-      const initialCenter = myLocation || NAVER_HQ;
-      const map = new window.naver.maps.Map(mapRef.current!, {
+      const initialCenter = myLocation || center || NAVER_HQ;
+      const map = new window.naver.maps.Map(mapRef.current, {
         center: new window.naver.maps.LatLng(
           initialCenter.lat,
           initialCenter.lng
@@ -140,7 +187,33 @@ export function MapContainer() {
     };
 
     initMap();
-  }, [mapInstance, myLocation, setCenter, setMapInstance]);
+
+    // Cleanup: 컴포넌트 언마운트 시 지도 인스턴스 정리
+    return () => {
+      isMounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      // ⭐️ 핵심: DOM도 완전히 정리해야 함
+      if (mapRef.current) {
+        // DOM의 모든 자식 요소 제거
+        while (mapRef.current.firstChild) {
+          mapRef.current.removeChild(mapRef.current.firstChild);
+        }
+      }
+
+      // 스토어에서 mapInstance 제거
+      setMapInstance(null);
+      isMapInitialized.current = false;
+
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
+        markerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 의존성 배열을 비워서 마운트 시 한 번만 실행
 
   // Request location on mount
   useEffect(() => {
@@ -238,7 +311,7 @@ export function MapContainer() {
         <button
           onClick={handleMoveToMyLocation}
           disabled={isGeolocationLoading}
-          className={`absolute bottom-6 right-4 w-12 h-12 rounded-full shadow-lg flex items-center justify-center z-50 transition-all ${
+          className={`absolute bottom-20 right-4 w-12 h-12 rounded-full shadow-lg flex items-center justify-center z-50 transition-all ${
             isGeolocationLoading
               ? "bg-blue-50 cursor-wait"
               : "bg-white hover:bg-gray-50"

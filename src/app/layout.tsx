@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { QueryProvider } from "../providers/query-provider";
+import { MobileLayout } from "@/shared/components/layout/mobile-layout";
+import { BottomNavigation } from "@/shared/components/layout/bottom-navigation";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,7 +39,12 @@ export default function RootLayout({
             src={`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${naverMapClientId}`}
           />
         )}
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <MobileLayout>
+            {children}
+            <BottomNavigation />
+          </MobileLayout>
+        </QueryProvider>
       </body>
     </html>
   );

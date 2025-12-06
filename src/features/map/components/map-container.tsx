@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Loader2, Crosshair, MapPin } from "lucide-react";
 import { useMapStore } from "../store/use-map-store";
 import { useGeolocation } from "../../../shared/hooks/use-geolocation";
+import { LocationSettingModal } from "./location-setting-modal";
 import type { MapLocation } from "../store/use-map-store";
 
 // Constants
@@ -28,9 +29,12 @@ const GEOLOCATION_OPTIONS = {
 
 export function MapContainer() {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<naver.maps.Map | null>(null);
   const markerRef = useRef<naver.maps.Marker | null>(null);
   const isMapInitialized = useRef(false);
+  const dragendListenerRef = useRef<naver.maps.MapEventListener | null>(null);
   const [isFallbackMode, setIsFallbackMode] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
 
   const {
     mapInstance,
@@ -175,15 +179,29 @@ export function MapContainer() {
         zoomControl: false,
       });
 
+      mapInstanceRef.current = map;
       setMapInstance(map);
 
-      window.naver.maps.Event.addListener(map, "dragend", () => {
-        const mapCenter = map.getCenter() as naver.maps.LatLng;
-        setCenter({
-          lat: mapCenter.lat(),
-          lng: mapCenter.lng(),
-        });
-      });
+      // dragend 이벤트 리스너는 한 번만 등록되도록 ref로 관리
+      dragendListenerRef.current = window.naver.maps.Event.addListener(
+        map,
+        "dragend",
+        () => {
+          const mapCenter = map.getCenter() as naver.maps.LatLng;
+          const newCenter = {
+            lat: mapCenter.lat(),
+            lng: mapCenter.lng(),
+          };
+          // 현재 center와 다를 때만 업데이트
+          const currentCenter = useMapStore.getState().center;
+          if (
+            currentCenter.lat !== newCenter.lat ||
+            currentCenter.lng !== newCenter.lng
+          ) {
+            setCenter(newCenter);
+          }
+        }
+      );
     };
 
     initMap();
@@ -203,8 +221,17 @@ export function MapContainer() {
         }
       }
 
+      // dragend 리스너 제거
+      if (dragendListenerRef.current) {
+        window.naver.maps.Event.removeListener(dragendListenerRef.current);
+        dragendListenerRef.current = null;
+      }
+
       // 스토어에서 mapInstance 제거
       setMapInstance(null);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current = null;
+      }
       isMapInitialized.current = false;
 
       if (markerRef.current) {
@@ -241,6 +268,13 @@ export function MapContainer() {
       targetLocation = NAVER_HQ;
       shouldUpdateMyLocation = false;
       setIsFallbackMode(true);
+      // 위치 권한 거부 시 모달 표시
+      if (
+        geolocationError.includes("denied") ||
+        geolocationError.includes("권한")
+      ) {
+        setShowLocationModal(true);
+      }
     }
 
     if (!targetLocation) return;
@@ -252,20 +286,30 @@ export function MapContainer() {
 
     moveMapToLocation(mapInstance, targetLatLng);
     updateMarker(mapInstance, targetLatLng);
-    setCenter(targetLocation);
-
-    if (shouldUpdateMyLocation) {
-      setMyLocation(targetLocation);
+    
+    // setCenter와 setMyLocation은 ref를 통해 최신 상태 확인 후 업데이트
+    const currentCenter = useMapStore.getState().center;
+    const currentMyLocation = useMapStore.getState().myLocation;
+    
+    // center가 다를 때만 업데이트
+    if (
+      currentCenter.lat !== targetLocation.lat ||
+      currentCenter.lng !== targetLocation.lng
+    ) {
+      setCenter(targetLocation);
     }
-  }, [
-    location,
-    geolocationError,
-    mapInstance,
-    setCenter,
-    setMyLocation,
-    moveMapToLocation,
-    updateMarker,
-  ]);
+
+    // myLocation이 다를 때만 업데이트
+    if (shouldUpdateMyLocation) {
+      if (
+        !currentMyLocation ||
+        currentMyLocation.lat !== targetLocation.lat ||
+        currentMyLocation.lng !== targetLocation.lng
+      ) {
+        setMyLocation(targetLocation);
+      }
+    }
+  }, [location, geolocationError, mapInstance, moveMapToLocation, updateMarker]);
 
   // Handle location button click
   const handleMoveToMyLocation = useCallback(() => {
@@ -354,6 +398,16 @@ export function MapContainer() {
           </div>
         )}
       </div>
+
+      {/* Location Setting Modal */}
+      <LocationSettingModal
+        isOpen={showLocationModal}
+        onClose={() => setShowLocationModal(false)}
+        onRetry={() => {
+          setShowLocationModal(false);
+          getCurrentPosition(GEOLOCATION_OPTIONS);
+        }}
+      />
     </div>
   );
 }

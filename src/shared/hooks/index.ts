@@ -1,3 +1,4 @@
 // Shared hooks
-export {};
+export { useGeolocation } from "./use-geolocation";
+export type { GeolocationPosition, GeolocationOptions, UseGeolocationReturn } from "./use-geolocation";
 

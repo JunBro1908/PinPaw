@@ -1,8 +1,5 @@
-export default function Home() {
-  return (
-    <div>
-      <h1>PinPaw Init</h1>
-    </div>
-  );
-}
+import { MapContainer } from "../features/map/components/map-container";
 
+export default function Home() {
+  return <MapContainer />;
+}

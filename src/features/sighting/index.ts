@@ -1,3 +1,2 @@
 // Sighting feature module
-export {};
-
+export { SightingForm } from "./components/sighting-form";

@@ -1,2 +1,22 @@
 @import "tailwindcss";
 
+/* 스크롤바 숨김 */
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome, Safari and Opera */
+}
+
+/* 드롭다운 옵션 스타일 개선 */
+select option {
+  padding: 0.75rem 1rem;
+  background-color: white;
+  color: #111827;
+}
+
+select option:first-child {
+  color: #6b7280;
+}

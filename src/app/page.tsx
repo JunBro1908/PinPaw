@@ -1,5 +1,7 @@
-import { MapContainer } from "../features/map/components/map-container";
-
 export default function Home() {
-  return <MapContainer />;
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <p className="text-xl text-gray-600">📸 목격 제보 화면 (준비중)</p>
+    </div>
+  );
 }

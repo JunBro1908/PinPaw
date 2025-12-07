@@ -1,50 +1,39 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Camera, MapPin, X, Edit2 } from "lucide-react";
+import { Camera, MapPin, X, Edit2, Loader2, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LocationSelector } from "./location-selector";
-import { useGeolocation } from "../../../shared/hooks/use-geolocation";
+import { useGeolocation } from "@/shared/hooks/use-geolocation";
+import { useImageUpload } from "../hooks/use-image-upload";
+import { submitSighting } from "../actions/submit-sighting";
+import { useToast } from "@/shared/hooks/use-toast";
+import { Toast } from "@/shared/components/toast";
 import type { MapLocation } from "../../map/store/use-map-store";
+import { FEATURE_TAGS, BREED_OPTIONS, COLOR_OPTIONS } from "../constants";
+import {
+  formatDateForDisplay,
+  getCurrentDateTimeLocal,
+  getCurrentDate,
+  getCurrentTime,
+  getDatePart,
+  getTimePart,
+  combineDateTime,
+} from "../utils/date-time";
 
-// 특징 태그 옵션 (JSONB features 필드에 저장될 값들)
-const FEATURE_TAGS = [
-  { id: "collar", label: "목줄 있음" },
-  { id: "clothes", label: "옷 입음" },
-  { id: "scared", label: "겁이 많음" },
-  { id: "friendly", label: "사람을 반김" },
-] as const;
-
-// 품종 옵션 (일반적인 강아지 품종)
-const BREED_OPTIONS = [
-  "믹스견",
-  "골든 리트리버",
-  "래브라도 리트리버",
-  "비글",
-  "불독",
-  "치와와",
-  "포메라니안",
-  "푸들",
-  "시츄",
-  "요크셔 테리어",
-  "허스키",
-  "기타",
-] as const;
-
-// 색상 옵션
-const COLOR_OPTIONS = [
-  "갈색",
-  "검정",
-  "흰색",
-  "크림색",
-  "회색",
-  "황금색",
-  "빨강/레드",
-  "기타",
-] as const;
-
+/**
+ * 목격 제보 폼 컴포넌트
+ *
+ * 주요 기능:
+ * - 이미지 업로드 및 압축
+ * - 위치 정보 자동 감지 및 수동 선택
+ * - 날짜/시간 선택 (날짜: 피커, 시간: 직접 입력)
+ * - 품종, 색상, 특징 태그 선택
+ * - 상세 설명 입력
+ * - Supabase Storage 및 DB 저장
+ */
 export function SightingForm() {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  // Form state
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [breed, setBreed] = useState<string>("");
   const [color, setColor] = useState<string>("");
@@ -53,8 +42,26 @@ export function SightingForm() {
   const [address, setAddress] = useState<string>("");
   const [isLocationAutoDetected, setIsLocationAutoDetected] = useState(false);
   const [isLocationSelectorOpen, setIsLocationSelectorOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSightedAtAutoSet, setIsSightedAtAutoSet] = useState(true);
+
+  // 제보 시간 (기본값: 현재 시간)
+  const [sightedAt, setSightedAt] = useState(() => getCurrentDateTimeLocal());
+
+  // Refs
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const timeInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Hooks
+  const { toast, showToast, hideToast } = useToast();
+  const {
+    previewUrl,
+    file: imageFile,
+    isCompressing,
+    handleImageChange,
+    handleRemoveImage,
+  } = useImageUpload();
   const {
     location: geolocation,
     isLoading: isGeolocationLoading,
@@ -74,7 +81,6 @@ export function SightingForm() {
   // 자동 위치 가져오기 성공 시
   useEffect(() => {
     if (geolocation) {
-      // location이 없거나 geolocation과 다른 경우에만 업데이트
       if (!location) {
         setLocation(geolocation);
         setIsLocationAutoDetected(true);
@@ -90,29 +96,17 @@ export function SightingForm() {
     }
   }, [geolocation, location]);
 
-  // 이미지 선택 핸들러
-  const handleImageSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setSelectedImage(reader.result as string);
-        };
-        reader.readAsDataURL(file);
+  // 이미지 제거 핸들러
+  const handleImageRemoveClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      handleRemoveImage();
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
       }
     },
-    []
+    [handleRemoveImage]
   );
-
-  // 이미지 제거 핸들러
-  const handleImageRemove = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSelectedImage(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }, []);
 
   // 이미지 업로드 영역 클릭 핸들러
   const handleImageAreaClick = useCallback(() => {
@@ -136,7 +130,7 @@ export function SightingForm() {
   const handleLocationSelect = useCallback(
     (selectedLocation: MapLocation, selectedAddress?: string) => {
       setLocation(selectedLocation);
-      setIsLocationAutoDetected(false); // 수동 선택 시 자동 감지 플래그 해제
+      setIsLocationAutoDetected(false);
       if (selectedAddress) {
         setAddress(selectedAddress);
       }
@@ -144,28 +138,163 @@ export function SightingForm() {
     []
   );
 
+  // 날짜 피커 열기 핸들러
+  const handleDatePickerOpen = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const input = dateInputRef.current;
+    if (!input) return;
+
+    if (
+      "showPicker" in input &&
+      typeof (input as any).showPicker === "function"
+    ) {
+      try {
+        const pickerResult = (input as any).showPicker();
+        if (pickerResult && typeof pickerResult.catch === "function") {
+          pickerResult.catch(() => {
+            input.focus();
+            input.click();
+          });
+        }
+      } catch {
+        input.focus();
+        input.click();
+      }
+    } else {
+      input.focus();
+      setTimeout(() => {
+        input.click();
+      }, 10);
+    }
+  }, []);
+
+  // 날짜 변경 핸들러
+  const handleDateChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedDate = e.target.value;
+      if (!selectedDate) return;
+
+      const currentTime = getTimePart(sightedAt) || getCurrentTime();
+      const newDateTime = combineDateTime(selectedDate, currentTime);
+      const selectedTime = new Date(newDateTime);
+      const now = new Date();
+
+      if (selectedTime > now) {
+        const currentDateTime = getCurrentDateTimeLocal();
+        setSightedAt(currentDateTime);
+        setIsSightedAtAutoSet(true);
+        showToast("미래 시간은 선택할 수 없습니다.", "error");
+      } else {
+        setSightedAt(newDateTime);
+        setIsSightedAtAutoSet(false);
+      }
+    },
+    [sightedAt, showToast]
+  );
+
+  // 시간 변경 핸들러
+  const handleTimeChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedTime = e.target.value;
+      if (!selectedTime) return;
+
+      const currentDate = getDatePart(sightedAt) || getCurrentDate();
+      const newDateTime = combineDateTime(currentDate, selectedTime);
+      const selectedDateTime = new Date(newDateTime);
+      const now = new Date();
+
+      if (selectedDateTime > now) {
+        const currentDateTime = getCurrentDateTimeLocal();
+        setSightedAt(currentDateTime);
+        setIsSightedAtAutoSet(true);
+        showToast("미래 시간은 선택할 수 없습니다.", "error");
+      } else {
+        setSightedAt(newDateTime);
+        setIsSightedAtAutoSet(false);
+      }
+    },
+    [sightedAt, showToast]
+  );
+
+  // 폼 초기화
+  const resetForm = useCallback(() => {
+    handleRemoveImage();
+    setSelectedTags(new Set());
+    setBreed("");
+    setColor("");
+    setDescription("");
+    setLocation(null);
+    setAddress("");
+    setIsLocationAutoDetected(false);
+    setSightedAt(getCurrentDateTimeLocal());
+    setIsSightedAtAutoSet(true);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [handleRemoveImage]);
+
   // 제보하기 버튼 핸들러
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
+
       if (!location) {
-        alert("위치를 선택해주세요.");
+        showToast("위치를 선택해주세요.", "error");
         return;
       }
-      // TODO: API 연동
-      // features는 JSONB 형식으로 저장 (선택된 태그들의 배열)
-      const features = Array.from(selectedTags);
-      console.log("제보 데이터:", {
-        image_url: selectedImage, // 실제로는 업로드 후 URL이 들어감
-        latitude: location.lat,
-        longitude: location.lng,
-        breed: breed || null,
-        color: color || null,
-        features: features.length > 0 ? features : null, // JSONB 형식
-        description: description || null,
-      });
+
+      if (!imageFile) {
+        showToast("사진을 업로드해주세요.", "error");
+        return;
+      }
+
+      if (isSubmitting) {
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      try {
+        const features = Array.from(selectedTags);
+        const sightedAtISO = new Date(sightedAt).toISOString();
+
+        const result = await submitSighting({
+          imageFile,
+          latitude: location.lat,
+          longitude: location.lng,
+          breed: breed || null,
+          color: color || null,
+          features: features.length > 0 ? features : null,
+          description: description || null,
+          sightedAt: sightedAtISO,
+        });
+
+        if (result.success) {
+          showToast("제보되었습니다!", "success");
+          resetForm();
+        } else {
+          showToast(result.error || "제보 제출에 실패했습니다.", "error");
+        }
+      } catch (error) {
+        console.error("[SightingForm] 제출 오류:", error);
+        showToast("제보 제출 중 오류가 발생했습니다.", "error");
+      } finally {
+        setIsSubmitting(false);
+      }
     },
-    [selectedImage, selectedTags, breed, color, description, location]
+    [
+      location,
+      imageFile,
+      selectedTags,
+      breed,
+      color,
+      description,
+      sightedAt,
+      isSubmitting,
+      showToast,
+      resetForm,
+    ]
   );
 
   return (
@@ -184,7 +313,7 @@ export function SightingForm() {
               className={cn(
                 "relative w-full rounded-lg overflow-hidden cursor-pointer transition-all",
                 "h-[300px] flex items-center justify-center",
-                selectedImage
+                previewUrl || isCompressing
                   ? "bg-gray-200"
                   : "bg-gray-50 border-2 border-dashed border-gray-300 hover:border-blue-400"
               )}
@@ -194,21 +323,29 @@ export function SightingForm() {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                onChange={handleImageSelect}
+                onChange={handleImageChange}
                 className="hidden"
+                disabled={isCompressing}
               />
 
-              {selectedImage ? (
+              {isCompressing ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-8">
+                  <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+                  <span className="text-gray-600 font-medium">
+                    이미지 압축 중...
+                  </span>
+                </div>
+              ) : previewUrl ? (
                 <>
                   <img
-                    src={selectedImage}
+                    src={previewUrl}
                     alt="업로드된 사진"
                     className="max-w-full max-h-full w-auto h-auto object-contain"
                     style={{ maxWidth: "100%", maxHeight: "300px" }}
                   />
                   <button
                     type="button"
-                    onClick={handleImageRemove}
+                    onClick={handleImageRemoveClick}
                     className="absolute top-2 right-2 w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center transition-colors z-10"
                     aria-label="사진 제거"
                   >
@@ -303,7 +440,76 @@ export function SightingForm() {
             </button>
           </section>
 
-          {/* Section 3: 품종 */}
+          {/* Section 3: 제보 시간 */}
+          <section>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              목격 시간
+              {isSightedAtAutoSet && (
+                <span className="ml-1 text-xs font-normal text-blue-600">
+                  (현재 시간으로 자동 설정)
+                </span>
+              )}
+              {!isSightedAtAutoSet && (
+                <span className="ml-1 text-xs font-normal text-gray-500">
+                  (수동 선택)
+                </span>
+              )}
+            </label>
+            <div className="flex gap-2">
+              {/* 날짜 선택 (피커) */}
+              <button
+                type="button"
+                onClick={handleDatePickerOpen}
+                className={cn(
+                  "flex-1 px-4 py-3 border rounded-lg text-left transition-all min-h-[44px]",
+                  "border-gray-300 bg-white hover:border-blue-400"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5 flex-shrink-0 text-blue-500" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-900 font-medium">
+                      {formatDateForDisplay(sightedAt)}
+                    </span>
+                  </div>
+                  <Edit2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                </div>
+              </button>
+              {/* 숨겨진 date input */}
+              <input
+                ref={dateInputRef}
+                type="date"
+                id="sightedAtDate"
+                value={getDatePart(sightedAt)}
+                max={getCurrentDate()}
+                onChange={handleDateChange}
+                className="sr-only"
+                style={{
+                  position: "absolute",
+                  opacity: 0,
+                  pointerEvents: "none",
+                  width: 0,
+                  height: 0,
+                }}
+              />
+
+              {/* 시간 입력 (직접 숫자 입력) */}
+              <input
+                ref={timeInputRef}
+                type="time"
+                id="sightedAtTime"
+                value={getTimePart(sightedAt)}
+                onChange={handleTimeChange}
+                className={cn(
+                  "flex-1 px-4 py-3 border rounded-lg text-left transition-all min-h-[44px]",
+                  "border-gray-300 bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200",
+                  "text-sm text-gray-900 font-medium"
+                )}
+              />
+            </div>
+          </section>
+
+          {/* Section 4: 품종 */}
           <section>
             <label
               htmlFor="breed"
@@ -349,7 +555,7 @@ export function SightingForm() {
             </div>
           </section>
 
-          {/* Section 4: 색상 */}
+          {/* Section 5: 색상 */}
           <section>
             <label
               htmlFor="color"
@@ -395,7 +601,7 @@ export function SightingForm() {
             </div>
           </section>
 
-          {/* Section 5: 특징 태그 */}
+          {/* Section 6: 특징 태그 */}
           <section>
             <label className="block text-sm font-medium text-gray-700 mb-3">
               특징 (선택사항)
@@ -422,7 +628,7 @@ export function SightingForm() {
             </div>
           </section>
 
-          {/* Section 6: 상세 설명 */}
+          {/* Section 7: 상세 설명 */}
           <section>
             <label
               htmlFor="description"
@@ -439,18 +645,25 @@ export function SightingForm() {
               className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-400"
             />
           </section>
-        </div>
-      </div>
 
-      {/* Footer: 제보하기 버튼 */}
-      <div className="px-4 py-4 border-t border-gray-200 bg-white">
-        <button
-          type="submit"
-          disabled={!location}
-          className="w-full h-14 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold rounded-lg transition-colors"
-        >
-          제보하기
-        </button>
+          {/* Section 8: 제보하기 버튼 */}
+          <section className="pt-4 pb-4">
+            <button
+              type="submit"
+              disabled={!location || !imageFile || isSubmitting}
+              className="w-full h-14 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>제보 중...</span>
+                </>
+              ) : (
+                "제보하기"
+              )}
+            </button>
+          </section>
+        </div>
       </div>
 
       {/* Location Selector Modal */}
@@ -460,6 +673,11 @@ export function SightingForm() {
         onSelect={handleLocationSelect}
         initialLocation={location || undefined}
       />
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={hideToast} />
+      )}
     </form>
   );
 }

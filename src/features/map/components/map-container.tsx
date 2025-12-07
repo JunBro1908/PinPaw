@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Loader2, Crosshair, MapPin } from "lucide-react";
 import { useMapStore } from "../store/use-map-store";
 import { useGeolocation } from "../../../shared/hooks/use-geolocation";
+import { LocationSettingModal } from "./location-setting-modal";
 import type { MapLocation } from "../store/use-map-store";
 
 // Constants
@@ -28,9 +29,12 @@ const GEOLOCATION_OPTIONS = {
 
 export function MapContainer() {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<naver.maps.Map | null>(null);
   const markerRef = useRef<naver.maps.Marker | null>(null);
   const isMapInitialized = useRef(false);
+  const dragendListenerRef = useRef<naver.maps.MapEventListener | null>(null);
   const [isFallbackMode, setIsFallbackMode] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
 
   const {
     mapInstance,
@@ -98,25 +102,72 @@ export function MapContainer() {
 
   // Initialize map
   useEffect(() => {
-    if (!mapRef.current || mapInstance || mapRef.current.children.length > 0) {
+    if (!mapRef.current) {
       return;
     }
 
+    // 스토어에서 최신 상태 확인
+    const currentMapInstance = useMapStore.getState().mapInstance;
+
+    // mapInstance가 있고 DOM에도 지도가 렌더링되어 있으면 재생성하지 않음
+    if (currentMapInstance && mapRef.current.children.length > 0) {
+      return;
+    }
+
+    // mapInstance가 null이지만 DOM에 지도가 남아있으면 정리 (zombie DOM)
+    if (currentMapInstance === null && mapRef.current.children.length > 0) {
+      while (mapRef.current.firstChild) {
+        mapRef.current.removeChild(mapRef.current.firstChild);
+      }
+    }
+
+    // mapInstance가 null이 아니면 재생성하지 않음
+    if (currentMapInstance !== null) {
+      return;
+    }
+
+    // 이미 초기화 중이면 재생성하지 않음
+    if (isMapInitialized.current) {
+      return;
+    }
+
+    let timeoutId: NodeJS.Timeout | null = null;
+    let isMounted = true;
+
     const initMap = () => {
+      if (!isMounted || !mapRef.current) {
+        return;
+      }
+
+      // 스토어에서 최신 mapInstance 상태 확인
+      const latestMapInstance = useMapStore.getState().mapInstance;
+      if (latestMapInstance !== null) {
+        return;
+      }
+
       if (
         typeof window === "undefined" ||
         !window.naver ||
         !window.naver.maps
       ) {
-        setTimeout(initMap, MAP_CONFIG.naverMapsCheckInterval);
+        timeoutId = setTimeout(initMap, MAP_CONFIG.naverMapsCheckInterval);
         return;
       }
 
-      if (isMapInitialized.current) return;
+      // 다시 한번 체크 (비동기 실행 중 상태 변경 가능)
+      const finalMapInstance = useMapStore.getState().mapInstance;
+      if (
+        isMapInitialized.current ||
+        mapRef.current.children.length > 0 ||
+        finalMapInstance !== null
+      ) {
+        return;
+      }
+
       isMapInitialized.current = true;
 
-      const initialCenter = myLocation || NAVER_HQ;
-      const map = new window.naver.maps.Map(mapRef.current!, {
+      const initialCenter = myLocation || center || NAVER_HQ;
+      const map = new window.naver.maps.Map(mapRef.current, {
         center: new window.naver.maps.LatLng(
           initialCenter.lat,
           initialCenter.lng
@@ -128,19 +179,68 @@ export function MapContainer() {
         zoomControl: false,
       });
 
+      mapInstanceRef.current = map;
       setMapInstance(map);
 
-      window.naver.maps.Event.addListener(map, "dragend", () => {
-        const mapCenter = map.getCenter() as naver.maps.LatLng;
-        setCenter({
-          lat: mapCenter.lat(),
-          lng: mapCenter.lng(),
-        });
-      });
+      // dragend 이벤트 리스너는 한 번만 등록되도록 ref로 관리
+      dragendListenerRef.current = window.naver.maps.Event.addListener(
+        map,
+        "dragend",
+        () => {
+          const mapCenter = map.getCenter() as naver.maps.LatLng;
+          const newCenter = {
+            lat: mapCenter.lat(),
+            lng: mapCenter.lng(),
+          };
+          // 현재 center와 다를 때만 업데이트
+          const currentCenter = useMapStore.getState().center;
+          if (
+            currentCenter.lat !== newCenter.lat ||
+            currentCenter.lng !== newCenter.lng
+          ) {
+            setCenter(newCenter);
+          }
+        }
+      );
     };
 
     initMap();
-  }, [mapInstance, myLocation, setCenter, setMapInstance]);
+
+    // Cleanup: 컴포넌트 언마운트 시 지도 인스턴스 정리
+    return () => {
+      isMounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      // ⭐️ 핵심: DOM도 완전히 정리해야 함
+      if (mapRef.current) {
+        // DOM의 모든 자식 요소 제거
+        while (mapRef.current.firstChild) {
+          mapRef.current.removeChild(mapRef.current.firstChild);
+        }
+      }
+
+      // dragend 리스너 제거
+      if (dragendListenerRef.current) {
+        window.naver.maps.Event.removeListener(dragendListenerRef.current);
+        dragendListenerRef.current = null;
+      }
+
+      // 스토어에서 mapInstance 제거
+      setMapInstance(null);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current = null;
+      }
+      isMapInitialized.current = false;
+
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
+        markerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 의존성 배열을 비워서 마운트 시 한 번만 실행
 
   // Request location on mount
   useEffect(() => {
@@ -168,6 +268,13 @@ export function MapContainer() {
       targetLocation = NAVER_HQ;
       shouldUpdateMyLocation = false;
       setIsFallbackMode(true);
+      // 위치 권한 거부 시 모달 표시
+      if (
+        geolocationError.includes("denied") ||
+        geolocationError.includes("권한")
+      ) {
+        setShowLocationModal(true);
+      }
     }
 
     if (!targetLocation) return;
@@ -179,20 +286,30 @@ export function MapContainer() {
 
     moveMapToLocation(mapInstance, targetLatLng);
     updateMarker(mapInstance, targetLatLng);
-    setCenter(targetLocation);
-
-    if (shouldUpdateMyLocation) {
-      setMyLocation(targetLocation);
+    
+    // setCenter와 setMyLocation은 ref를 통해 최신 상태 확인 후 업데이트
+    const currentCenter = useMapStore.getState().center;
+    const currentMyLocation = useMapStore.getState().myLocation;
+    
+    // center가 다를 때만 업데이트
+    if (
+      currentCenter.lat !== targetLocation.lat ||
+      currentCenter.lng !== targetLocation.lng
+    ) {
+      setCenter(targetLocation);
     }
-  }, [
-    location,
-    geolocationError,
-    mapInstance,
-    setCenter,
-    setMyLocation,
-    moveMapToLocation,
-    updateMarker,
-  ]);
+
+    // myLocation이 다를 때만 업데이트
+    if (shouldUpdateMyLocation) {
+      if (
+        !currentMyLocation ||
+        currentMyLocation.lat !== targetLocation.lat ||
+        currentMyLocation.lng !== targetLocation.lng
+      ) {
+        setMyLocation(targetLocation);
+      }
+    }
+  }, [location, geolocationError, mapInstance, moveMapToLocation, updateMarker]);
 
   // Handle location button click
   const handleMoveToMyLocation = useCallback(() => {
@@ -238,7 +355,7 @@ export function MapContainer() {
         <button
           onClick={handleMoveToMyLocation}
           disabled={isGeolocationLoading}
-          className={`absolute bottom-6 right-4 w-12 h-12 rounded-full shadow-lg flex items-center justify-center z-50 transition-all ${
+          className={`absolute bottom-20 right-4 w-12 h-12 rounded-full shadow-lg flex items-center justify-center z-50 transition-all ${
             isGeolocationLoading
               ? "bg-blue-50 cursor-wait"
               : "bg-white hover:bg-gray-50"
@@ -281,6 +398,16 @@ export function MapContainer() {
           </div>
         )}
       </div>
+
+      {/* Location Setting Modal */}
+      <LocationSettingModal
+        isOpen={showLocationModal}
+        onClose={() => setShowLocationModal(false)}
+        onRetry={() => {
+          setShowLocationModal(false);
+          getCurrentPosition(GEOLOCATION_OPTIONS);
+        }}
+      />
     </div>
   );
 }

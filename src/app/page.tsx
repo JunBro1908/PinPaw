@@ -1,5 +1,9 @@
-import { MapContainer } from "../features/map/components/map-container";
+import { SightingForm } from "../features/sighting";
 
 export default function Home() {
-  return <MapContainer />;
+  return (
+    <div className="h-full p-4">
+      <SightingForm />
+    </div>
+  );
 }

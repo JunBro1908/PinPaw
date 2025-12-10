@@ -28,6 +28,8 @@ export function LocationSelector({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<naver.maps.Map | null>(null);
   const markerRef = useRef<naver.maps.Marker | null>(null);
+  const clickListenerRef = useRef<naver.maps.MapEventListener | null>(null);
+  const dragendListenerRef = useRef<naver.maps.MapEventListener | null>(null);
 
   // Geolocation 훅
   const {
@@ -42,91 +44,6 @@ export function LocationSelector({
     timeout: 15000,
     maximumAge: 300000,
   };
-
-  // 지도 초기화
-  useEffect(() => {
-    if (!isOpen || !mapRef.current) return;
-
-    if (typeof window === "undefined" || !window.naver || !window.naver.maps) {
-      return;
-    }
-
-    const initialCenter = initialLocation || {
-      lat: 37.5665,
-      lng: 126.978,
-    };
-
-    const map = new window.naver.maps.Map(mapRef.current, {
-      center: new window.naver.maps.LatLng(
-        initialCenter.lat,
-        initialCenter.lng
-      ),
-      zoom: 15,
-      scaleControl: false,
-      logoControl: false,
-      mapDataControl: false,
-      zoomControl: true,
-    });
-
-    mapInstanceRef.current = map;
-
-    // 마커 생성
-    const marker = new window.naver.maps.Marker({
-      position: new window.naver.maps.LatLng(
-        initialCenter.lat,
-        initialCenter.lng
-      ),
-      map,
-      draggable: true,
-    });
-
-    markerRef.current = marker;
-
-    // 초기 위치 설정
-    if (initialLocation) {
-      setSelectedLocation(initialLocation);
-      updateLocation(initialLocation.lat, initialLocation.lng);
-    } else {
-      setSelectedLocation(initialCenter);
-      updateLocation(initialCenter.lat, initialCenter.lng);
-    }
-
-    // 지도 클릭 시 마커 이동
-    const clickListener = window.naver.maps.Event.addListener(
-      map,
-      "click",
-      (e: any) => {
-        const latlng = e.coord;
-        marker.setPosition(latlng);
-        updateLocation(latlng.lat(), latlng.lng());
-      }
-    );
-
-    // 마커 드래그 시 위치 업데이트
-    const dragendListener = window.naver.maps.Event.addListener(
-      marker,
-      "dragend",
-      () => {
-        const position = marker.getPosition() as naver.maps.LatLng;
-        updateLocation(position.lat(), position.lng());
-      }
-    );
-
-    return () => {
-      // 이벤트 리스너 제거
-      if (clickListener) {
-        window.naver.maps.Event.removeListener(clickListener);
-      }
-      if (dragendListener) {
-        window.naver.maps.Event.removeListener(dragendListener);
-      }
-      if (markerRef.current) {
-        markerRef.current.setMap(null);
-        markerRef.current = null;
-      }
-      mapInstanceRef.current = null;
-    };
-  }, [isOpen, initialLocation]);
 
   // 위치 업데이트 및 주소 조회
   const updateLocation = useCallback((lat: number, lng: number) => {
@@ -165,6 +82,107 @@ export function LocationSelector({
     );
   }, []);
 
+  // 지도 초기화
+  useEffect(() => {
+    if (!isOpen || !mapRef.current) return;
+
+    if (
+      typeof window === "undefined" ||
+      !window.naver ||
+      !window.naver.maps ||
+      !window.naver.maps.Map
+    ) {
+      console.warn("[LocationSelector] 네이버 맵 API가 로드되지 않았습니다.");
+      return;
+    }
+
+    try {
+      const initialCenter = initialLocation || {
+        lat: 37.5665,
+        lng: 126.978,
+      };
+
+      const map = new window.naver.maps.Map(mapRef.current, {
+        center: new window.naver.maps.LatLng(
+          initialCenter.lat,
+          initialCenter.lng
+        ),
+        zoom: 15,
+        scaleControl: false,
+        logoControl: false,
+        mapDataControl: false,
+        zoomControl: true,
+      });
+
+      mapInstanceRef.current = map;
+
+      // 마커 생성
+      const marker = new window.naver.maps.Marker({
+        position: new window.naver.maps.LatLng(
+          initialCenter.lat,
+          initialCenter.lng
+        ),
+        map,
+        draggable: true,
+      });
+
+      markerRef.current = marker;
+
+      // 초기 위치 설정
+      if (initialLocation) {
+        setSelectedLocation(initialLocation);
+        updateLocation(initialLocation.lat, initialLocation.lng);
+      } else {
+        setSelectedLocation(initialCenter);
+        updateLocation(initialCenter.lat, initialCenter.lng);
+      }
+
+      // 지도 클릭 시 마커 이동
+      clickListenerRef.current = window.naver.maps.Event.addListener(
+        map,
+        "click",
+        (e: any) => {
+          const latlng = e.coord;
+          marker.setPosition(latlng);
+          updateLocation(latlng.lat(), latlng.lng());
+        }
+      );
+
+      // 마커 드래그 시 위치 업데이트
+      dragendListenerRef.current = window.naver.maps.Event.addListener(
+        marker,
+        "dragend",
+        () => {
+          const position = marker.getPosition() as naver.maps.LatLng;
+          updateLocation(position.lat(), position.lng());
+        }
+      );
+    } catch (error) {
+      console.error("[LocationSelector] 지도 초기화 실패:", error);
+      // 에러 발생 시 모달을 닫고 사용자에게 알림
+      // (필요시 에러 상태를 추가하여 UI에 표시할 수 있음)
+    }
+
+    return () => {
+      // 이벤트 리스너 제거 (window.naver.maps가 존재하는지 확인)
+      if (typeof window !== "undefined" && window.naver?.maps?.Event) {
+        if (clickListenerRef.current) {
+          window.naver.maps.Event.removeListener(clickListenerRef.current);
+          clickListenerRef.current = null;
+        }
+        if (dragendListenerRef.current) {
+          window.naver.maps.Event.removeListener(dragendListenerRef.current);
+          dragendListenerRef.current = null;
+        }
+      }
+      if (markerRef.current) {
+        markerRef.current.setMap(null);
+        markerRef.current = null;
+      }
+      mapInstanceRef.current = null;
+    };
+  }, [isOpen, initialLocation, updateLocation]);
+
   // 현재 위치로 이동
   const handleMoveToMyLocation = useCallback(() => {
     if (isGeolocationLoading) return;
@@ -174,7 +192,15 @@ export function LocationSelector({
 
   // Geolocation 위치가 업데이트되면 지도와 마커 이동
   useEffect(() => {
-    if (!geolocation || !mapInstanceRef.current || !markerRef.current) return;
+    if (
+      !geolocation ||
+      !mapInstanceRef.current ||
+      !markerRef.current ||
+      typeof window === "undefined" ||
+      !window.naver?.maps
+    ) {
+      return;
+    }
 
     const latlng = new window.naver.maps.LatLng(
       geolocation.lat,

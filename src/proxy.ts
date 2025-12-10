@@ -63,11 +63,11 @@ export const config = {
      * - api (API routes)
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
+     * - favicon.ico, apple-touch-icon.png (icon files)
      * - 이미지 파일 (.svg, .png, .jpg, .jpeg, .gif, .webp)
      * - 폰트 파일 (.woff, .woff2, .ttf, .eot)
      * - 기타 정적 파일 (.ico, .json, .xml)
      */
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|woff|woff2|ttf|eot|ico|json|xml)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|apple-touch-icon.*\\.png|.*\\.(?:svg|png|jpg|jpeg|gif|webp|woff|woff2|ttf|eot|ico|json|xml)$).*)",
   ],
 };

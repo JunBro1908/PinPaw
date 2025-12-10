@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { SightingListItem } from "../hooks/use-sightings";
 
 // naver.maps.Map 타입 사용
 type NaverMap = naver.maps.Map;
@@ -14,6 +15,7 @@ interface MapState {
   myLocation: MapLocation | null;
   zoom: number;
   isMapLoaded: boolean;
+  selectedSighting: SightingListItem | null;
 }
 
 interface MapActions {
@@ -22,6 +24,7 @@ interface MapActions {
   setMyLocation: (location: MapLocation | null) => void;
   setZoom: (zoom: number) => void;
   initializeMap: (map: NaverMap) => void;
+  setSelectedSighting: (sighting: SightingListItem | null) => void;
 }
 
 type MapStore = MapState & MapActions;
@@ -38,6 +41,7 @@ export const useMapStore = create<MapStore>((set, get) => ({
   myLocation: null,
   zoom: 16,
   isMapLoaded: false,
+  selectedSighting: null,
 
   // Actions
   setMapInstance: (map) => {
@@ -49,7 +53,9 @@ export const useMapStore = create<MapStore>((set, get) => ({
     // 지도 인스턴스가 있으면 실제 지도 중심점도 업데이트
     const { mapInstance } = get();
     if (mapInstance) {
-      mapInstance.setCenter(new window.naver.maps.LatLng(location.lat, location.lng));
+      mapInstance.setCenter(
+        new window.naver.maps.LatLng(location.lat, location.lng)
+      );
     }
   },
 
@@ -68,7 +74,7 @@ export const useMapStore = create<MapStore>((set, get) => ({
 
   initializeMap: (map) => {
     const { myLocation } = get();
-    
+
     set({
       mapInstance: map,
       isMapLoaded: true,
@@ -76,10 +82,16 @@ export const useMapStore = create<MapStore>((set, get) => ({
 
     // 내 위치가 있으면 그곳으로 중심점 설정
     if (myLocation) {
-      const center = new window.naver.maps.LatLng(myLocation.lat, myLocation.lng);
+      const center = new window.naver.maps.LatLng(
+        myLocation.lat,
+        myLocation.lng
+      );
       map.setCenter(center);
       set({ center: myLocation });
     }
   },
-}));
 
+  setSelectedSighting: (sighting) => {
+    set({ selectedSighting: sighting });
+  },
+}));

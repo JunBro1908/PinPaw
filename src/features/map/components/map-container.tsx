@@ -5,6 +5,8 @@ import { Loader2, Crosshair, MapPin } from "lucide-react";
 import { useMapStore } from "../store/use-map-store";
 import { useGeolocation } from "../../../shared/hooks/use-geolocation";
 import { LocationSettingModal } from "./location-setting-modal";
+import { MapMarkers } from "./map-markers";
+import { SightingDetailModal } from "../../sighting/components/sighting-detail-modal";
 import type { MapLocation } from "../store/use-map-store";
 
 // Constants
@@ -40,9 +42,11 @@ export function MapContainer() {
     mapInstance,
     center,
     myLocation,
+    selectedSighting,
     setMapInstance,
     setCenter,
     setMyLocation,
+    setSelectedSighting,
   } = useMapStore();
 
   const {
@@ -221,8 +225,12 @@ export function MapContainer() {
         }
       }
 
-      // dragend 리스너 제거
-      if (dragendListenerRef.current) {
+      // dragend 리스너 제거 (window.naver.maps가 존재하는지 확인)
+      if (
+        dragendListenerRef.current &&
+        typeof window !== "undefined" &&
+        window.naver?.maps?.Event
+      ) {
         window.naver.maps.Event.removeListener(dragendListenerRef.current);
         dragendListenerRef.current = null;
       }
@@ -286,11 +294,11 @@ export function MapContainer() {
 
     moveMapToLocation(mapInstance, targetLatLng);
     updateMarker(mapInstance, targetLatLng);
-    
+
     // setCenter와 setMyLocation은 ref를 통해 최신 상태 확인 후 업데이트
     const currentCenter = useMapStore.getState().center;
     const currentMyLocation = useMapStore.getState().myLocation;
-    
+
     // center가 다를 때만 업데이트
     if (
       currentCenter.lat !== targetLocation.lat ||
@@ -309,7 +317,13 @@ export function MapContainer() {
         setMyLocation(targetLocation);
       }
     }
-  }, [location, geolocationError, mapInstance, moveMapToLocation, updateMarker]);
+  }, [
+    location,
+    geolocationError,
+    mapInstance,
+    moveMapToLocation,
+    updateMarker,
+  ]);
 
   // Handle location button click
   const handleMoveToMyLocation = useCallback(() => {
@@ -407,6 +421,15 @@ export function MapContainer() {
           setShowLocationModal(false);
           getCurrentPosition(GEOLOCATION_OPTIONS);
         }}
+      />
+
+      {/* Sightings Markers */}
+      {mapInstance && <MapMarkers />}
+
+      {/* Sighting Detail Modal */}
+      <SightingDetailModal
+        isOpen={!!selectedSighting}
+        onClose={() => setSelectedSighting(null)}
       />
     </div>
   );

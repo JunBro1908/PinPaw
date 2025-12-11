@@ -21,7 +21,13 @@ export function getSupabaseClient(): SupabaseClient<Database> {
     );
   }
 
-  supabaseClient = createClient<Database>(supabaseUrl, supabaseAnonKey);
+  supabaseClient = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
 
   return supabaseClient;
 }

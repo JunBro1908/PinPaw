@@ -38,8 +38,9 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // 보호된 경로 정의 (/map은 제외 - 로그인 UI를 보여주는 페이지이므로)
-  const protectedRoutes = ["/my"];
+  // 보호된 경로 정의
+  // /map과 /my는 클라이언트 사이드에서 인증을 처리하므로 제외
+  const protectedRoutes: string[] = [];
   const isProtectedRoute = protectedRoutes.some((route) =>
     pathname.startsWith(route)
   );
